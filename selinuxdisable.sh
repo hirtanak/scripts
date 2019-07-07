@@ -1,11 +1,11 @@
 #!/bin/bash
 
-NP=8
+NODES=64
 
-cat ~/machinefile${NP} | while read line
+cat ~/machinefile${NODES} | while read line
 do
     echo "${line%:15}"
-    ssh -t -t azureuser@${line%:15} <<EOC
+    ssh -t -t  -l cyclecloud -i <file> ${line%:15} <<EOC
     hostname
     sudo setenforce 0
     exit
