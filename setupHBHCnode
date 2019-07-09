@@ -1,0 +1,51 @@
+!#/usr/bash
+
+KERNEL=$(uname -r)
+sudo yum install -y kernel-devel-${KERNEL}
+if [ $? -eq 1 ]
+then
+KERNEL=.10.0-957.10.1.el7.x86_64
+sudo rpm -i http://vault.centos.org/7.6.1810/os/x86_64/Packages/kernel-devel-${KERNEL}.rpm
+fi
+
+sudo yum install -y python-devel
+sudo yum install -y redhat-rpm-config rpm-build gcc-gfortran gcc gcc-c++
+sudo yum install -y gtk2 atk cairo tcl tk createrepo 
+sudo yum install -y kernel-devel numactl-devel
+
+wget https://hirostpublicshare.blob.core.windows.net/solvers/MLNX_OFED_LINUX-4.6-1.0.1.1-rhel7.6-x86_64.tgz
+
+tar zxvf MLNX_OFED_LINUX-4.6-1.0.1.1-rhel7.6-x86_64.tgz
+
+sudo ./MLNX_OFED_LINUX-4.6-1.0.1.1-rhel7.6-x86_64/mlnxofedinstall --kernel-sources /usr/src/kernels/$KERNEL --add-kernel-support --skip-repo
+
+sudo sed -i -e "s/SELINUX=enforcing/SELINUX=disabled/g" /etc/selinux/config
+sudo setenforce 0
+
+sudo su -
+echo "vm.zone_reclaim_mode = 1" >> /etc/sysctl.conf sysctl -p
+exit
+
+cat << EOF >> /etc/security/limits.conf
+*               hard    memlock         unlimited
+*               soft    memlock         unlimited
+*               hard    nofile          65535
+*               soft    nofile          65535
+EOF
+
+sudo yum install -y autoconf automake git libtool
+
+cd
+wget https://github.com/openucx/ucx/archive/v1.5.2.tar.gz 
+
+tar xvf v1.5.2.tar.gz
+cd ucx-1.5.2
+
+./autogen.sh
+./contrib/configure-release --prefix=/usr/local/ucx-1.5.2
+sudo make -j 44 && sudo make install
+
+cd
+wget https://hirostpublicshare.blob.core.windows.net/solvers/l_mpi_2019.2.187.tgz
+
+tar zxvf l_mpi_2019.2.187.tgz
