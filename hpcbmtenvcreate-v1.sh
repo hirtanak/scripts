@@ -22,7 +22,7 @@ TAG=${VMPREFIX}=$(date "+%Y%m%d")
 MAXVM=3
 
 # 追加の永続ディスクが必要な場合、ディスクサイズ(GB)を記入する https://azure.microsoft.com/en-us/pricing/details/managed-disks/
-PERMANENTDISK=32
+PERMANENTDISK=
 
 # 必要なパッケージ。Ubuntuの場合、以下のパッケージが必要
 #sudo apt install -y parallel jq
