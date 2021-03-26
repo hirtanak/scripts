@@ -253,6 +253,9 @@ EOL
                 echo "current running VMs: ${numvm}"
         ;;
         remount )
+                echo "current mounting status"
+                seq 2 $MAXVM | parallel -v -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ./${VMPREFIX} -t -t $USERNAME@{} "df | grep '/mnt/resource'""
+                # mounting nfs server from compute node.
                 numvm=$(cat ./ipaddresslist | wc -l)
                 if [ -f ./ipaddresslist ]; then
                         ipaddresstmp=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-1 --query publicIps -o tsv)
