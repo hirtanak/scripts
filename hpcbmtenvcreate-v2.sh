@@ -4,7 +4,7 @@ MyResourceGroup=tmcbmt01
 Location=japaneast
 VMPREFIX=tmcbmt01
 VMSIZE=Standard_HB120rs_v2 #Standard_D2as_v4 #Standard_HC44rs, Standard_HB120rs_v3
-PBSVMSIZE=Standard_D4as_v4
+PBSVMSIZE=Standard_D2as_v4
 
 MyAvailabilitySet=${VMPREFIX}avset01
 MyNetwork=${VMPREFIX}-vnet01
@@ -40,7 +40,7 @@ if [ $# -ne 1 ]; then
 	echo "1. create コマンド: コンピュートノードを作成します"
 	echo "2. addlogin コマンド: login, PBSノードを作成します"
 	echo "3. privatenw コマンド: コンピュートノード、PBSノードからグローバルIPアドレスを除きます"
-	echo "stop コマンド: コンピュートノードを停止します。"
+	echo "stop コマンド: すべてのコンピュートノードを停止します。"
 	exit 1
 fi
 # SSH鍵チェック。なければ作成
@@ -281,7 +281,7 @@ EOL
 		for count in $(seq 1 $MAXVM) ; do
 			echo "VM $count: ${VMPREFIX}-$count"
 			unset ipaddresstmp
-			while [ -z $ipaddresstmp ]; do
+			while [ -z "$ipaddresstmp" ]; do
 				ipaddresstmp=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-${count} --query publicIps -o tsv)
 				echo "ip: $ipaddresstmp"
 			done
@@ -289,26 +289,51 @@ EOL
 		done
 		echo "current ip address list"
 		cat ./ipaddresslist
+		# コンピュートノード#1：マウント設定
 		echo "nfs server @ ${VMPREFIX}-1"
 		vm1ip=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-${count} --query publicIps -o tsv)
 		echo "${VMPREFIX}-1's IP: $vm1ip"
 		mountip=$(az vm show -g $MyResourceGroup --name ${VMPREFIX}-1 -d --query privateIps -o tsv)
-		# マウント設定
 		# インターネットからアクセス可能であれば、SSHで高速に設定する
-		if [ -z $vm1ip ]; then
+		if [ -z "$vm1ip" ]; then
 		# vm1ipが空なら、IPアドレスが取得できなければ、az cliでの取得
 			for count in $(seq 2 $MAXVM) ; do
 				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource"
 			done
 		fi
-		if [ ! -z $vm1ip ]; then
+		if [ ! -z "$vm1ip" ]; then
 			# vm1ipが空でなければSSHの取得
 			echo "600:${VMPREFIX}-1: $vm1ip"
 			ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${ipaddresstmp} 'sudo showmount -e'
 			echo "600:mounting: ${VMPREFIX}: 2-$MAXVM"
-			parallel -v -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/resource""
-			parallel -v -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chown $USERNAME:$USERNAME /mnt/resource""
-			parallel -v -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource""
+			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/resource""
+			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chown $USERNAME:$USERNAME /mnt/resource""
+			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource""
+		fi
+		# PBSノード：マウント設定
+		echo "pbsnode: nfs server @ ${VMPREFIX}-pbs"
+		# PBSノード：グローバルIPアドレス取得
+		pbsvmname=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-pbs --query name -o tsv)
+		# PBSノード：マウント向けプライベートIPアドレス取得
+		pbsvmip=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-pbs --query publicIps -o tsv)
+		echo "${VMPREFIX}-pbs's IP: $pbsvmip"
+		pbsmountip=$(az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs -d --query privateIps -otsv)
+		# インターネットからアクセス可能であれば、SSHで高速に設定する
+		if [ -z "$pbsvmname" ]; then
+			# vm1ipが空なら、IPアドレスが取得できなければ、az cliでの取得
+			if [ -z "$pbsvmip" ]; then
+				for count in $(seq 1 $MAXVM) ; do
+					az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mount $DEBUG -t nfs ${pbsmountip}:/mnt/share /mnt/share"
+				done
+			else
+				# vm1ipが空でなければSSHの取得
+				echo "600:${VMPREFIX}-1: $vm1ip"
+				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} 'sudo showmount -e'
+				echo "600:mounting ${VMPREFIX}-pbs /mnt/share @ 1-$MAXVM"
+				parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/share""
+				parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chown $USERNAME:$USERNAME /mnt/share""
+				parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mount $DEBUG -t nfs ${pbsmountip}:/mnt/share /mnt/share""
+			fi
 		fi
 	;;
 	stop )
@@ -544,8 +569,8 @@ Host *
 StrictHostKeyChecking no
 UserKnownHostsFile=/dev/null
 EOL
-		# fullpingpon実行
-		echo "pingponglist: $pingponglist"
+		# fullpingpong実行
+		echo "pingpong: preparing files"
 #		vm1ip=$(head -1 ./ipaddresslist)
 		impidir=$(ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip} "ls /opt/intel/impi/")
 		cat ./pingponglist
@@ -553,24 +578,25 @@ EOL
 		scp -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} ./pingponglist $USERNAME@${vm1ip}:/home/$USERNAME/
 		scp -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} ./fullpingpong.sh $USERNAME@${vm1ip}:/mnt/resource/
 		scp -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} ./pingponglist $USERNAME@${vm1ip}:/mnt/resource/
-# SSH追加設定
+		# SSH追加設定
 		cat ./ipaddresslist
-		echo "600: copy passwordless settings"
+		echo "pingpong: copy passwordless settings"
 		seq 1 $MAXVM | parallel $DEBUG -a ipaddresslist "scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./config $USERNAME@{}:/home/$USERNAME/.ssh/config"
 		seq 1 $MAXVM | parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "chmod 600 /home/$USERNAME/.ssh/config""
 		# コマンド実行
+		echo "pingpong: running pingpong for all compute nodes"
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip} -t -t "rm /mnt/resource/result"
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip} -t -t "bash /mnt/resource/fullpingpong.sh > /mnt/resource/result"
 		scp -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip}:/mnt/resource/result ./
 		echo "ローカルのresultファイルを確認"
 	;;
 #### ==========================================================================
-	# 
+	# ログインノード、PBSノードを作成します。
 	addlogin )
 		# 既存ネットワークチェック
 		tmpsubnetwork=$(az network vnet subnet show -g $MyResourceGroup --name $MySubNetwork2 --vnet-name $MyNetwork --query id)
 		echo "current subnetowrk id: $tmpsubnetwork"
-		if [ -z $tmpsubnetwork ]; then
+		if [ -z "$tmpsubnetwork" ]; then
 			# mgmtサブネット追加
 			az network vnet subnet create -g $MyResourceGroup --vnet-name $MyNetwork -n $MySubNetwork2 --address-prefixes 10.0.1.0/24 --network-security-group $MyNetworkSecurityGroup -o table
 		fi
@@ -616,7 +642,7 @@ StrictHostKeyChecking no
 UserKnownHostsFile=/dev/null
 EOL
 		fi
-		# ログインノードパスワードレス設定
+		# ログインノード：パスワードレス設定
 		echo "ログインノード: confugring passwordless settings"
 		scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./${VMPREFIX} $USERNAME@${loginvmip}:/home/$USERNAME/.ssh/${VMPREFIX}
 		scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./${VMPREFIX} $USERNAME@${loginvmip}:/home/$USERNAME/.ssh/id_rsa
@@ -625,7 +651,7 @@ EOL
 		# SSH Config設定
 		scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./config $USERNAME@${loginvmip}:/home/$USERNAME/.ssh/config
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${loginvmip} -t -t "chmod 600 /home/$USERNAME/.ssh/config"
-		# PBSノードパスワードレス設定
+		# PBSノード：パスワードレス設定
 		echo "600: PBSノード: confugring passwordless settings"
 		scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./${VMPREFIX} $USERNAME@${pbsvmip}:/home/$USERNAME/.ssh/${VMPREFIX}
 		scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./${VMPREFIX} $USERNAME@${pbsvmip}:/home/$USERNAME/.ssh/id_rsa
@@ -634,7 +660,7 @@ EOL
 		# SSH Config設定
 		scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./config $USERNAME@${pbsvmip}:/home/$USERNAME/.ssh/config
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "chmod 600 /home/$USERNAME/.ssh/config"
-		# sudo設定
+		# BSノード：sudo設定
 		echo "sudo 設定"
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo cat /etc/sudoers | grep $USERNAME" > sudotmp
 		sudotmp=$(cat ./sudotmp)
@@ -702,7 +728,6 @@ EOL
 			echo "openPBSバイナリダウンロードエラー。ネットワーク通信などでgithubにアクセスできない場合、カレントディレクトリにファイルをダウンロードする方法でも可能"
 			exit 1
 		fi
-
 		# HOSTSファイル作成
 		if [ -f ./hostsfile ]; then
 			rm ./hostsfile
@@ -727,7 +752,6 @@ EOL
 		cat ./hostsfile
 		rm ./hosttmpfile
 		rm ./hosttmpfile2
-
 		# PBSノード：OpenPBSサーバコピー＆インストール
 		echo "copy openpbs-server-20.0.1-0.x86_64.rpm"
 #				ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "md5sum /home/$USERNAME/openpbs-server-20.0.1-0.x86_64.rpm | cut -d ' ' -f 1" > md5server-remote
@@ -874,8 +898,8 @@ EOL
 		# PBSプロセス起動
 		# PBSノード起動＆$USERNAME環境変数設定
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "grep pbs.sh /home/azureuser/.bashrc" > ./pbssh
-		pbsh=$(cat ./pbssh)
-		if [ -z "$pbshs" ]; then
+		pbssh=$(cat ./pbssh)
+		if [ -z "$pbssh" ]; then
 			ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "yes | sudo /etc/init.d/pbs start"
 		fi
 		# openPBSクライアントノード起動＆$USERNAME環境変数設定
@@ -883,7 +907,7 @@ EOL
 		vm1ip=$(cat ./ipaddresslist | head -n 1)
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip} -t -t "grep pbs.sh /home/azureuser/.bashrc" > ./pbssh
 		pbsh=$(cat ./pbssh)
-		if [ -z "$pbshs" ]; then
+		if [ -z "$pbssh" ]; then
 			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t 'echo 'source /etc/profile.d/pbs.sh' >> ~/.bashrc'"
 		fi
 		rm ./pbssh
@@ -894,6 +918,7 @@ EOL
 		done
 	;;
 	updatensg )
+		# 既存の実行ホストからのアクセスを修正します
 		echo "current host global ip: $LIMITEDIP"
 		az network nsg rule update --name ssh --nsg-name $MyNetworkSecurityGroup -g $MyResourceGroup --access allow --protocol Tcp --direction Inbound \
 			--priority 1000 --source-address-prefix $LIMITEDIP --source-port-range "*" --destination-address-prefix "*" --destination-port-range 22 -o table
@@ -902,6 +927,7 @@ EOL
 	;;
 	privatenw )
 		# 既存のクラスターからインターネットからの外部接続を削除する
+		echo "既存のクラスターからインターネットからの外部接続を削除"
 		count=0
 		for count in `seq 1 $MAXVM`; do
 			tmpipconfig=$(az network nic ip-config list --nic-name ${VMPREFIX}-${count}VMNic -g $MyResourceGroup -o tsv --query [].name)
@@ -912,19 +938,16 @@ EOL
 		az network nic ip-config update --name $tmpipconfig -g $MyResourceGroup --nic-name ${VMPREFIX}-pbsVMNic --remove publicIpAddress -o table &
 	;;
 	publicnw )
-		echo "Under constraction: このコマンドはまだ未実装"
+		# 既存のクラスターからインターネットからの外部接続を確立します
+		echo "既存のクラスターからインターネットからの外部接続を確立します"
 		count=0
 		for count in `seq 1 $MAXVM`; do
-#			tmpipconfig=$(az network nic ip-config list --nic-name ${VMPREFIX}-${count}VMNic -g $MyResourceGroup -o tsv --query [].name)
-#			az network nic ip-config list --nic-name ${VMPREFIX}-${count}VMNic -g $MyResourceGroup -o tsv --query [].name > tmpipconfig
-#			tmpipconfig=$(cat ./tmpipconfig)
-			# ipconfig${VMPREFIX}-${count}
-			az network nic ip-config update --name ipconfig${VMPREFIX}-${count} -g $MyResourceGroup --nic-name ${VMPREFIX}-${count}VMNic --add publicIpAddress
+			tmpipconfig=$(az network nic ip-config list --nic-name ${VMPREFIX}-${count}VMNic -g $MyResourceGroup -o tsv --query [].name)
+			az network nic ip-config update --name ipconfig${VMPREFIX}-${count} -g $MyResourceGroup --nic-name ${VMPREFIX}-${count}VMNic --public ${VMPREFIX}-${count}PublicIP -o table &
 		done
 		# PBSノードも同様にインターネットからの外部接続を追加する
-#		tmpipconfig=$(az network nic ip-config list --nic-name ${VMPREFIX}-pbsVMNic -g $MyResourceGroup -o tsv --query [].name)
-#		az network nic ip-config update --name $tmpipconfig -g $MyResourceGroup --nic-name ${VMPREFIX}-pbsVMNic --add publicIpAddress -o table
-		az network nic ip-config update --name ipconfig${VMPREFIX}-pbs -g $MyResourceGroup --nic-name ${VMPREFIX}-pbsVMNic --add publicIpAddress
+		tmpipconfig=$(az network nic ip-config list --nic-name ${VMPREFIX}-pbsVMNic -g $MyResourceGroup -o tsv --query [].name)
+		az network nic ip-config update --name ipconfig${VMPREFIX}-pbs -g $MyResourceGroup --nic-name ${VMPREFIX}-pbsVMNic --public ${VMPREFIX}-pbsPublicIP -o table &
 	;;
 esac
 
