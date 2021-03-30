@@ -660,7 +660,7 @@ EOL
 		# SSH Config設定
 		scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./config $USERNAME@${pbsvmip}:/home/$USERNAME/.ssh/config
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "chmod 600 /home/$USERNAME/.ssh/config"
-		# BSノード：sudo設定
+		# PBSノード：sudo設定
 		echo "sudo 設定"
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo cat /etc/sudoers | grep $USERNAME" > sudotmp
 		sudotmp=$(cat ./sudotmp)
@@ -725,17 +725,17 @@ EOL
 		done
 		if [ ! -f ./openpbs-server-20.0.1-0.x86_64.rpm ] || [ ! -f ./openpbs-client-20.0.1-0.x86_64.rpm ] || [ ! -f ./openpbs-execution-20.0.1-0.x86_64.rpm ]; then
 			echo "file download error!. please download manually OpenPBS file in current diretory"
-			echo "openPBSバイナリダウンロードエラー。ネットワーク通信などでgithubにアクセスできない場合、カレントディレクトリにファイルをダウンロードする方法でも可能"
+			echo "openPBSバイナリダウンロードエラー。githubにアクセスできないネットワーク環境の場合、カレントディレクトリにファイルをダウンロードする方法でも可能"
 			exit 1
 		fi
-		# HOSTSファイル作成
+		# hostsfileファイル作成準備：既存ファイル削除
 		if [ -f ./hostsfile ]; then
 			rm ./hostsfile
 		fi
 		if [ -f ./nodefile ]; then
 			rm ./nodefile
 		fi
-		# hostsfileファイく作成準備：プライベートIPアドレス取得
+		# hostsfileファイル作成準備：プライベートIPアドレス取得
 		for count in $(seq 1 $MAXVM) ; do
 			nodelist=$(az vm show -g $MyResourceGroup --name ${VMPREFIX}-${count} -d --query privateIps -o tsv)
 			echo $nodelist >> nodelist
@@ -744,6 +744,7 @@ EOL
 		paste ./nodelist ./vmlist > ./hostsfile
 		# ダブルクォーテーション削除
 		sed -i -e "s/\"//g" ./hostsfile
+		# hostsfileファイル作成
 		pbsprivateip=$(az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs -d --query privateIps -o tsv)
 		echo "$pbsprivateip" > pbsprivateip
 		echo "${VMPREFIX}-pbs" > hosttmpfile
@@ -778,7 +779,7 @@ EOL
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "ls -la ~/"
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo yum install --quiet -y /home/$USERNAME/openpbs-server-20.0.1-0.x86_64.rpm"
 
-		# ビルドする場合
+		# openPBSをビルドする場合：現在は利用していない
 #		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "wget -q https://github.com/openpbs/openpbs/archive/refs/tags/v20.0.1.tar.gz -O /home/$USERNAME/openpbs-20.0.1.tar.gz"
 #		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "tar zxvf /home/$USERNAME/openpbs-20.0.1.tar.gz"
 #		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "LANG=C /home/$USERNAME/openpbs-20.0.1/autogen.sh"
@@ -816,8 +817,7 @@ EOL
 		# PBSノード：openPBSクライアントコピー
 		echo "copy openpbs-execution-20.0.1-0.x86_64.rpm to all compute nodes"
 		parallel $DEBUG -a ipaddresslist "scp -o StrictHostKeyChecking=no -o 'ConnectTimeout 360' -i ${SSHKEYDIR} ./openpbs-execution-20.0.1-0.x86_64.rpm $USERNAME@{}:/home/$USERNAME/"
-#		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${} -t \ 
-#			'wget -q https://github.com/hirtanak/scripts/releases/download/0.0.1/openpbs-execution-20.0.1-0.x86_64.rpm -O /tmp/openpbs-execution-20.0.1-0.x86_64.rpm'"
+		# ダウンロード、およびMD5チェック
 		count=0
 		rm ./md5executionremote
 		rm ./md5executionremote2
@@ -870,12 +870,9 @@ EOL
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo rpm -aq | grep openpbs""
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo /opt/pbs/libexec/pbs_habitat""
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo /opt/pbs/libexec/pbs_postinstall""
+		# pbs.confファイル生成
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo sed -i -e 's/PBS_START_MOM=0/PBS_START_MOM=1/g' /etc/pbs.conf""
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo sed -i -e s/CHANGE_THIS_TO_PBS_SERVER_HOSTNAME/${VMPREFIX}-pbs/g /etc/pbs.conf""
-#		for count in `seq 1 $MAXVM` ; do
-#			line=$(sed -n ${count}P ./ipaddresslist)
-#			ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${line} -t -t "sudo sed -e -i s/CHANGE_THIS_TO_PBS_SERVER_HOSTNAME/${VMPREFIX}-pbs/g /etc/pbs.conf"
-#		done
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo cat /etc/pbs.conf""
 		# openPBSクライアント：パーミッション設定
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chmod 4755 /opt/pbs/sbin/pbs_iff""
