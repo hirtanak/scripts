@@ -4,7 +4,7 @@ MyResourceGroup=tmcbmt01
 Location=japaneast
 VMPREFIX=tmcbmt01
 VMSIZE=Standard_HB120rs_v2 #Standard_D2as_v4 #Standard_HC44rs, Standard_HB120rs_v3
-PBSVMSIZE=Standard_D2as_v4
+PBSVMSIZE=Standard_D4as_v4
 
 MyAvailabilitySet=${VMPREFIX}avset01
 MyNetwork=${VMPREFIX}-vnet01
