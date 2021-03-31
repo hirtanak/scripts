@@ -16,7 +16,7 @@ echo "current client global ip address: $LIMITEDIP. This script defines the rist
 LIMITEDIP2=113.40.3.153/32 #追加制限IPアドレスをCIRDで記載 例：1.1.1.0/24
 echo "addtional accessible CIDR: $LIMITEDIP2"
 # MyNic="cfdbmt-nic"
-IMAGE="OpenLogic:CentOS-HPC:7_8:latest"
+IMAGE="OpenLogic:CentOS-HPC:7_8:latest" #Azure URNフォーマット
 USERNAME=azureuser
 # SSH公開鍵ファイルを指定
 SSHKEYFILE="./${VMPREFIX}.pub"
@@ -36,11 +36,11 @@ CMDNAME=`basename $0`
 # コマンドオプションエラー処理
 if [ $# -ne 1 ]; then
 	echo "実行するには1個の引数が必要です。" 1>&2
-	echo "create,delete,start,stop,list,remount,pingpong,addlogin 引数を一つ指定する必要があります。" 1>&2
-	echo "1. create コマンド: コンピュートノードを作成します"
-	echo "2. addlogin コマンド: login, PBSノードを作成します"
-	echo "3. privatenw コマンド: コンピュートノード、PBSノードからグローバルIPアドレスを除きます"
-	echo "stop コマンド: すべてのコンピュートノードを停止します。"
+	echo "create,delete,start,stop,list,remount,pingpong,addlogin,updatensg,privatenw,publicnw の引数を一つ指定する必要があります。" 1>&2
+	echo "1. create コマンド: コンピュートノードを作成します" 1>&2
+	echo "2. addlogin コマンド: login, PBSノードを作成します" 1>&2
+	echo "3. privatenw コマンド: コンピュートノード、PBSノードからグローバルIPアドレスを除きます" 1>&2
+	echo "stop コマンド: すべてのコンピュートノードを停止します。" 1>&2
 	exit 1
 fi
 # SSH鍵チェック。なければ作成
@@ -188,7 +188,6 @@ case $1 in
 			fi
 		done
 		# 高速化のためにSSHで一括設定しておく
-#		parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${} -t "sudo cat /etc/sudoers""
 		echo "600: ssh parallel settings: nfs client"
 		parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo yum install --quiet -y nfs-utils""
 		parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/resource""
@@ -248,22 +247,26 @@ EOL
 		done
 	;;
 	start )
-		## OSディスクタイプ変更: Premium_LRS
+		## PBSノード：OSディスクタイプ変更: Premium_LRS
 		azure_sku2="Premium_LRS"
 		osdiskidpbs=$(az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs --query storageProfile.osDisk.managedDisk.id -o tsv)
-		az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs --query storageProfile.osDisk.managedDisk.id -o tsv 
-		az disk update --sku ${azure_sku2} --ids ${osdiskidpbs}
-		## Dataディスクタイプ変更: Premium_LRS
-		az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs --query storageProfile.dataDisks[*].managedDisk -o tsv \
-		| awk -F" " '{ print $2}' | xargs -I{} az disk update --sku ${azure_sku2} --ids {}
-		echo "starting PBS VM"
-		az vm start -g $MyResourceGroup --name ${VMPREFIX}-pbs --output none
-		echo "starting loging VM"
-		az vm start -g $MyResourceGroup --name ${VMPREFIX}-login --output none
+#		az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs --query storageProfile.osDisk.managedDisk.id -o table
+		if [ ! -z "$osdiskidpbs" ]; then
+			az disk update --sku ${azure_sku2} --ids ${osdiskidpbs} --query [].tier
+		## PBSノード：Dataディスクタイプ変更: Premium_LRS
+			az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs --query storageProfile.dataDisks[*].managedDisk -o tsv | awk -F" " '{ print $2}' | xargs -I{} az disk update --sku ${azure_sku2} --ids {}
+			echo "starting PBS VM"
+			az vm start -g $MyResourceGroup --name ${VMPREFIX}-pbs --query powerState
+			# 今のところPBSノードが存在すればログインノードも存在する
+			echo "starting loging VM"
+			az vm start -g $MyResourceGroup --name ${VMPREFIX}-login --query powerState
+		else
+			echo "no PBS node here!"
+		fi
 		echo "starting VM ${VMPREFIX}-1"
-		az vm start -g $MyResourceGroup --name ${VMPREFIX}-1 --output none
+		az vm start -g $MyResourceGroup --name ${VMPREFIX}-1 --query powerState
 		echo "starting VM ${VMPREFIX}:2-$MAXVM compute nodes"
-		seq 2 $MAXVM | parallel "az vm start -g $MyResourceGroup --name ${VMPREFIX}-{} --output none"
+		seq 2 $MAXVM | parallel "az vm start -g $MyResourceGroup --name ${VMPREFIX}-{} --query powerState"
 		echo "checking VM status"
 		numvm=0
 		while [ $((numvm)) -lt $((MAXVM)) ]; do
@@ -296,43 +299,69 @@ EOL
 		mountip=$(az vm show -g $MyResourceGroup --name ${VMPREFIX}-1 -d --query privateIps -o tsv)
 		# インターネットからアクセス可能であれば、SSHで高速に設定する
 		if [ -z "$vm1ip" ]; then
-		# vm1ipが空なら、IPアドレスが取得できなければ、az cliでの取得
+			# vm1ipが空なら、IPアドレスが取得できなければ、az cliでの取得
 			for count in $(seq 2 $MAXVM) ; do
+				# 並列化・時間短縮は検討事項
+				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mkdir -p /mnt/resource"
+				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo chown $USERNAME:$USERNAME /mnt/resource"
 				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource"
 			done
-		fi
-		if [ ! -z "$vm1ip" ]; then
-			# vm1ipが空でなければSSHの取得
+		else
+			# vm1ipが空でなければSSHでマウントを実施
 			echo "600:${VMPREFIX}-1: $vm1ip"
-			ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${ipaddresstmp} 'sudo showmount -e'
+			ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${vm1ip} 'sudo showmount -e'
+			# 1行目を削除したIPアドレスリストを作成
+			sed '1d' ./ipaddresslist > ./ipaddresslist-tmp
 			echo "600:mounting: ${VMPREFIX}: 2-$MAXVM"
-			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/resource""
-			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chown $USERNAME:$USERNAME /mnt/resource""
-			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource""
+			parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/resource""
+			parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chown $USERNAME:$USERNAME /mnt/resource""
+			parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource""
+		fi
+		echo "end of starting up computing nodes"
+		# PBSノードがなければ終了
+		if [ -z "$osdiskidpbs" ]; then
+			echo "no PBS node here!"
+			exit 0
 		fi
 		# PBSノード：マウント設定
 		echo "pbsnode: nfs server @ ${VMPREFIX}-pbs"
-		# PBSノード：グローバルIPアドレス取得
+		# PBSノード：名前取得
 		pbsvmname=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-pbs --query name -o tsv)
-		# PBSノード：マウント向けプライベートIPアドレス取得
+		# PBSノード：グローバルIPアドレス取得
 		pbsvmip=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-pbs --query publicIps -o tsv)
 		echo "${VMPREFIX}-pbs's IP: $pbsvmip"
+		# PBSノード：マウント向けプライベートIPアドレス取得
 		pbsmountip=$(az vm show -g $MyResourceGroup --name ${VMPREFIX}-pbs -d --query privateIps -otsv)
 		# インターネットからアクセス可能であれば、SSHで高速に設定する
 		if [ -z "$pbsvmname" ]; then
 			# vm1ipが空なら、IPアドレスが取得できなければ、az cliでの取得
 			if [ -z "$pbsvmip" ]; then
-				for count in $(seq 1 $MAXVM) ; do
+				# コンピュートノード#1のみ実施
+				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mkdir -p /mnt/share"
+				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo chown $USERNAME:$USERNAME /mnt/share"
+				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mount $DEBUG -t nfs ${pbsmountip}:/mnt/share /mnt/share"
+				for count in $(seq 2 $MAXVM) ; do
+				# コンピュートノード#1をマウント
+					az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mkdir -p /mnt/share"
+					az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo chown $USERNAME:$USERNAME /mnt/share"
 					az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts "sudo mount $DEBUG -t nfs ${pbsmountip}:/mnt/share /mnt/share"
 				done
 			else
-				# vm1ipが空でなければSSHの取得
-				echo "600:${VMPREFIX}-1: $vm1ip"
+				# pbsbmipが空でなければSSHでマウント情報の取得
+				echo "600:${VMPREFIX}-1: $pbsvmip"
 				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} 'sudo showmount -e'
 				echo "600:mounting ${VMPREFIX}-pbs /mnt/share @ 1-$MAXVM"
 				parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/share""
 				parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chown $USERNAME:$USERNAME /mnt/share""
 				parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mount $DEBUG -t nfs ${pbsmountip}:/mnt/share /mnt/share""
+				# vm1ipが空でなければSSHでマウント情報の取得
+				echo "600:${VMPREFIX}-1: $vm1ip"
+				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${vm1ip} 'sudo showmount -e'
+				echo "600:mounting: ${VMPREFIX}: 2-$MAXVM"
+				parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mkdir -p /mnt/resource""
+				parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chown $USERNAME:$USERNAME /mnt/resource""
+				parallel $DEBUG -a ipaddresslist-tmp "ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource""
+				rm ./ipaddresslist-tmp
 			fi
 		fi
 	;;
@@ -370,11 +399,40 @@ EOL
 		vm1state=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-1 --query powerState)
 		vm1ip=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-1 --query publicIps -o tsv)
 		pbsvmip=$(az vm show -d -g $MyResourceGroup --name ${VMPREFIX}-pbs --query publicIps -o tsv)
+		if [ -z "$pbsvmip" ]; then
+			echo "no PBS node here! checking only compute nodes."
+			# コンピュートノードのみのチェック
+			count=0
+			checkssh=$(ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} -t $USERNAME@${vm1ip} "uname")
+			if [ ! -z "$checkssh" ]; then
+				echo "${VMPREFIX}-1: nfs server status"
+				ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip} 'sudo showmount -e'
+				echo "nfs client mount status"
+					for count in `seq 2 $MAXVM`; do
+						line=$(sed -n ${count}P ./ipaddresslist)
+						ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} -t -t $USERNAME@${line} "echo '########## host: ${VMPREFIX}-: 2 - ${count} ##########'"
+						ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} -t -t $USERNAME@${line} "df | grep '/mnt/'"
+					done
+				else
+					# SSHできないのでaz vm run-commandでの情報取得
+					echo "600: az vm run-command: nfs server status"
+					az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-1 --command-id RunShellScript --scripts "sudo showmount -e"
+					echo "nfs client mount status:=======1-2 others: skiped======="
+					az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-1 --command-id RunShellScript --scripts "df | grep /mnt/"
+					az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-2 --command-id RunShellScript --scripts "df | grep /mnt/"
+			fi
+			# コマンド完了
+			echo "end of list command"
+			exit 0
+		fi
+		# PBSノード、コンピュートノードのNFSマウント確認
 		count=0
 		checkssh=$(ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} -t $USERNAME@${vm1ip} "uname")
 		checkssh2=$(ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} -t $USERNAME@${pbsvmip} "uname")
-		if [ ! -z "$checkssh" ] && [ ! -z "$checkssh2" ]; then
-			echo "nfs server status"
+		if [ ! -z "$checkssh" -a ! -z "$checkssh2" ]; then
+			echo "${VMPREFIX}-pbs: nfs server status"
+			ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} 'sudo showmount -e'
+			echo "${VMPREFIX}-1: nfs server status"
 			ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip} 'sudo showmount -e'
 			echo "nfs client mount status"
 			for count in `seq 2 $MAXVM`; do
@@ -384,8 +442,8 @@ EOL
 			done
 		else
 			echo "600: az vm run-command: nfs server status"
-			az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-1 --command-id RunShellScript --scripts "sudo showmount -e"
 			az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-pbs --command-id RunShellScript --scripts "sudo showmount -e"
+			az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-1 --command-id RunShellScript --scripts "sudo showmount -e"
 			echo "nfs client mount status:=======1-2 others: skiped======="
 			az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-1 --command-id RunShellScript --scripts "df | grep /mnt/"
 			az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-2 --command-id RunShellScript --scripts "df | grep /mnt/"
@@ -460,7 +518,7 @@ EOL
 		seq 1 $MAXVM | parallel "az network public-ip delete -g $MyResourceGroup --name ${VMPREFIX}-{}PublicIP"
 		az network public-ip delete -g $MyResourceGroup --name ${VMPREFIX}-pbsPublicIP
 		az network public-ip delete -g $MyResourceGroup --name ${VMPREFIX}-loginPublicIP
-		echo "detele data disk"
+		echo "detelting data disk"
 		az disk delete -g $MyResourceGroup --name ${VMPREFIX}-1-disk0 --yes
 		az disk delete -g $MyResourceGroup --name ${VMPREFIX}-pbs-disk0 --yes
 		echo "current running VMs: ${numvm}"
@@ -608,6 +666,7 @@ EOL
 			--size Standard_D2a_v4 \
 			--vnet-name $MyNetwork --subnet $MySubNetwork2 \
 			--nsg $MyNetworkSecurityGroup --nsg-rule SSH \
+			--public-ip-address-allocation static \
 			--image $IMAGE \
 			--admin-username $USERNAME --ssh-key-values $SSHKEYFILE \
 			--tags $TAG -o table
@@ -619,6 +678,7 @@ EOL
 			--size $PBSVMSIZE \
 			--vnet-name $MyNetwork --subnet $MySubNetwork \
 			--nsg $MyNetworkSecurityGroup --nsg-rule SSH \
+			--public-ip-address-allocation static \
 			--image $IMAGE \
 			--admin-username $USERNAME --ssh-key-values $SSHKEYFILE \
 			--tags $TAG -o table
@@ -804,14 +864,14 @@ EOL
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "cat /home/$USERNAME/hostsfile | sudo tee -a /etc/hosts"
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo grep ${VMPREFIX} /etc/hosts" > tmpcheckhostsfile
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo /etc/hosts | grep ${VMPREFIX}"
-		tmpcheckhostsfile=$(cat ./tmpcheckhostsfile)
-		if [ -z "$tmpcheckhostsfile" ]; then
+		if [ ! -s "$tmpcheckhostsfile" ]; then
 			for count in `seq 1 $MAXVM`; do
 				scp -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} ./hostsfile $USERNAME@${VMPREFIX}-${count}:/home/$USERNAME/
 				ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${VMPREFIX}-${count} -t -t "cat /home/$USERNAME/hostsfile | sudo tee -a /etc/hosts"
 				ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo /etc/hosts | grep ${VMPREFIX}"
 			done
 		fi
+		rm ./tmpcheckhostsfile
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "ln -s /mnt/share/ /home/$USERNAME/"
 ### ===========================================================================
 		# PBSノード：openPBSクライアントコピー
@@ -877,7 +937,7 @@ EOL
 		# openPBSクライアント：パーミッション設定
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chmod 4755 /opt/pbs/sbin/pbs_iff""
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo chmod 4755 /opt/pbs/sbin/pbs_rcp""
-		#
+		# openPBSクライアント：/var/spool/pbs/mom_priv/config コンフィグ設定
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo sed -i -e s/CHANGE_THIS_TO_PBS_SERVER_HOSTNAME/${VMPREFIX}-pbs/g /var/spool/pbs/mom_priv/config""
 		for count in `seq 1 $MAXVM` ; do
 			line=$(sed -n ${count}P ./ipaddresslist)
@@ -903,27 +963,35 @@ EOL
 		parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t "sudo /etc/init.d/pbs start""
 		vm1ip=$(cat ./ipaddresslist | head -n 1)
 		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${vm1ip} -t -t "grep pbs.sh /home/azureuser/.bashrc" > ./pbssh
-		pbsh=$(cat ./pbssh)
+		pbssh=$(cat ./pbssh)
 		if [ -z "$pbssh" ]; then
 			parallel $DEBUG -a ipaddresslist "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{} -t -t 'echo 'source /etc/profile.d/pbs.sh' >> ~/.bashrc'"
 		fi
 		rm ./pbssh
 		echo "finished to set up additonal login and PBS node"
 ### ===========================================================================
+		# PBSジョブスケジューラセッティング
+		echo "configpuring PBS settings"
 		for count in `seq 1 $MAXVM`; do
-			ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${line} -t -t "sudo -u root qmgr -c "create node ${VMPREFIX}-${count}""
+			echo "sudo /opt/pbs/bin/qmgr -c "create node ${VMPREFIX}-${count}"" >> setuppbs.sh
 		done
+		echo "setuppbs.sh: `cat ./setuppbs.sh`"
+		scp -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} ./setuppbs.sh $USERNAME@${pbsvmip}:/home/$USERNAME/setuppbs.sh
+		ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo bash /home/$USERNAME/setuppbs.sh"
+#		sed -i -e "s/\"//g" ./vmlist > vmlist2
+#		parallel $DEBUG -a vmlist2 "ssh -o StrictHostKeyChecking=no -o 'ConnectTimeout 180' -i ${SSHKEYDIR} $USERNAME@{pbsvmip} -t -t "sudo /opt/pbs/bin/qmgr -c 'create node {}'""
 	;;
 	updatensg )
-		# 既存の実行ホストからのアクセスを修正します
-		echo "current host global ip: $LIMITEDIP"
+		# NSGアップデート：既存の実行ホストからのアクセスを修正
+		echo "current host global ip address: $LIMITEDIP"
+		echo "updating NSG for current host global ip address"
 		az network nsg rule update --name ssh --nsg-name $MyNetworkSecurityGroup -g $MyResourceGroup --access allow --protocol Tcp --direction Inbound \
 			--priority 1000 --source-address-prefix $LIMITEDIP --source-port-range "*" --destination-address-prefix "*" --destination-port-range 22 -o table
 		az network nsg rule update --name ssh2 --nsg-name $MyNetworkSecurityGroup -g $MyResourceGroup --access allow --protocol Tcp --direction Inbound \
 			--priority 1010 --source-address-prefix $LIMITEDIP2 --source-port-range "*" --destination-address-prefix "*" --destination-port-range 22 -o table
 	;;
 	privatenw )
-		# 既存のクラスターからインターネットからの外部接続を削除する
+		# PBSノード、コンピュートノード：インターネットからの外部接続を削除
 		echo "既存のクラスターからインターネットからの外部接続を削除"
 		count=0
 		for count in `seq 1 $MAXVM`; do
@@ -935,7 +1003,8 @@ EOL
 		az network nic ip-config update --name $tmpipconfig -g $MyResourceGroup --nic-name ${VMPREFIX}-pbsVMNic --remove publicIpAddress -o table &
 	;;
 	publicnw )
-		# 既存のクラスターからインターネットからの外部接続を確立します
+#		done
+		# PBSノード、コンピュートノード：インターネットからの外部接続を確立
 		echo "既存のクラスターからインターネットからの外部接続を確立します"
 		count=0
 		for count in `seq 1 $MAXVM`; do
