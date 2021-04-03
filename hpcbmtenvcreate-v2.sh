@@ -211,7 +211,7 @@ case $1 in
 				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${line} -t -t "sudo mkdir -p /mnt/resource"
 				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${line} -t -t "sudo chown $USERNAME:$USERNAME /mnt/resource"
 				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${line} -t -t "sudo mount $DEBUG -t nfs ${mountip}:/mnt/resource /mnt/resource"
-				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${line} -t -t "echo '/dev/sdb1    /mnt/resource    xfs    defaults    0    2' | sudo tee /etc/fstab"
+				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${line} -t -t "echo '/dev/sdb1    /mnt/resource    xfs    defaults    0    2' | sudo tee -a /etc/fstab"
 			else
 				echo "600: setting by az vm run-command"
 				az vm run-command invoke -g $MyResourceGroup --name ${VMPREFIX}-${count} --command-id RunShellScript --scripts 'sudo yum install -y nfs-utils'
