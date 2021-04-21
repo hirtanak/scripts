@@ -1559,13 +1559,13 @@ EOL
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo cp /etc/hosts /etc/hosts.original"
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "cat /home/$USERNAME/hostsfile | sudo tee -a /etc/hosts"
 		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo grep ${VMPREFIX} /etc/hosts" > tmpcheckhostsfile
-		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo /etc/hosts | grep ${VMPREFIX}"
+		ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo cat /etc/hosts | grep ${VMPREFIX}"
 		if [ ! -s "$tmpcheckhostsfile" ]; then
 			for count in `seq 1 $MAXVM`; do
 				scp -o StrictHostKeyChecking=no -i ${SSHKEYDIR} ./hostsfile $USERNAME@${VMPREFIX}-${count}:/home/$USERNAME/
 				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${VMPREFIX}-${count} -t -t "sudo cp /etc/hosts /etc/hosts.original"
 				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${VMPREFIX}-${count} -t -t "cat /home/$USERNAME/hostsfile | sudo tee -a /etc/hosts"
-				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo /etc/hosts | grep ${VMPREFIX}"
+				ssh -o StrictHostKeyChecking=no -i ${SSHKEYDIR} $USERNAME@${pbsvmip} -t -t "sudo cat /etc/hosts | grep ${VMPREFIX}"
 			done
 		fi
 		rm ./tmpcheckhostsfile
