@@ -8,7 +8,7 @@ echo -n "$(TZ=JST-9 date '+%Y %b %d %a %H:%M %Z')" && echo " - pingpong #: $max,
 echo "========================================================================"
 # run pingpong
 case $checkosver in
-	7.?.???? )
+    7.?.???? )
     IMPI_VERSION=2018.4.274
     for NODE in `cat ./nodelist.txt`; \
         do for NODE2 in `cat ./nodelist.txt`; \
