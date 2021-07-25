@@ -1,6 +1,7 @@
 #!/bin/bash
 max=$(cat ./pingponglist | wc -l)
 count=1
+checkosver=$(cat /etc/redhat-release | cut  -d " " -f 4)
 ## TZ=JST-9 date
 echo "========================================================================"
 echo -n "$(TZ=JST-9 date '+%Y %b %d %a %H:%M %Z')" && echo " - pingpong #: $max, OS: ${checkosver}"
@@ -24,3 +25,4 @@ case $checkosver in
 			/opt/intel/oneapi/mpi/${IMPI_VERSION}/bin/mpiexec -hosts $line -ppn 1 -n 2 /opt/intel/oneapi/mpi/${IMPI_VERSION}/bin/IMB-MPI1 pingpong | grep -e ' 512 ' -e NODES -e usec; >> result
 		done
 	;;
+easc
