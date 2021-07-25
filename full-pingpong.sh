@@ -1,6 +1,12 @@
 #!/bin/bash
 max=$(cat ./pingponglist | wc -l)
 count=1
+# pingponglist 作成：全ノードの組み合わせ作成
+for NODE in $(cat ./nodelist.txt); do
+        for NODE2 in $(cat ./nodelist.txt); do
+                echo "$NODE,$NODE2" >> pingponglist
+        done
+done
 checkosver=$(cat /etc/redhat-release | cut  -d " " -f 4)
 ## TZ=JST-9 date
 echo "========================================================================"
