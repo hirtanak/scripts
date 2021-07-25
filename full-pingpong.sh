@@ -1,7 +1,4 @@
 #!/bin/bash
-checkosver=$(cat /etc/redhat-release | cut  -d " " -f 4)
-cp /home/$USER/* /mnt/resource/scratch/
-cd /mnt/resource/scratch/
 max=$(cat ./pingponglist | wc -l)
 count=1
 ## TZ=JST-9 date
