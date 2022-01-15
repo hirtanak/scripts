@@ -7,7 +7,7 @@ for username in $users; do
     adduser --disabled-password --gecos "" "$username"
 
     # 非対話でパスワード設定（初期パスワードをユーザ名と同じにする）
-    echo "${username}123!:${username}123!" | chpasswd
+    echo "${username}:${username}123!" | chpasswd
 
     # sudo 権限付与
     gpasswd -a "$username" sudo
