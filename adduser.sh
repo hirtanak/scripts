@@ -1,6 +1,6 @@
 #!/bin/bash
 
-users=("nishi higashi minami kita")
+users=("$1")
 for username in $users; do
     # 対話式でメールアカウントとか聞かれないように-gecos ""指定
     # パスワードは後でchpasswdで設定するのでdisable
