@@ -11,6 +11,10 @@ done
 max=$(cat ./pingponglist | wc -l)
 count=1
 checkosver=$(cat /etc/redhat-release | cut  -d " " -f 4)
+checkalama=$(cat /etc/redhat-release | cut  -d " " -f 1)
+if [ $checkalama = "AlmaLinux" ]; then
+  checkosver=$(cat /etc/redhat-release | cut  -d " " -f 3)
+fi
 ## TZ=JST-9 date
 echo "========================================================================"
 echo -n "$(TZ=JST-9 date '+%Y %b %d %a %H:%M %Z')" && echo " - pingpong #: $max, OS: ${checkosver}"
