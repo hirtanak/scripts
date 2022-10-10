@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Azure/azure-devtestlab/master/schemas/2016-11-28/dtlArtifacts.json",
+  "title": "paraview",
+  "publisher": "estebang",
+  "description": "Installs Paraview using the Chocolatey package manager",
+  "tags": [
+    "Windows",
+    "Paraview"
+  ],
+  "iconUri": "https://raw.githubusercontent.com/hirtanak/scripts/master/paraview.svg",
+  "targetOsType": "Windows",
+  "runCommand": {
+    "commandToExecute": "[concat('powershell.exe -ExecutionPolicy bypass \"& ./install-choco-package.ps1 -Packages ', 'paraview', '\"')]"
+  }
+}
