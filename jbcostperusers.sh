@@ -13,9 +13,6 @@ echo "User,JobID,NodeCount,Walltime,Cost" > $output_file
 start_job_id=0
 end_job_id=30
 
-# 過去何日間のログを収集
-DAY=30
-
 # ユーザごとの総コストを保存する連想配列
 declare -A user_costs
 
@@ -23,26 +20,29 @@ declare -A user_costs
 for (( job_id=$start_job_id; job_id<=$end_job_id; job_id++ ))
 do
   # tracejobの出力から必要な情報を抽出
-  job_info=$(tracejob -n ${DAY} $job_id 2>&1)
+  job_info=$(tracejob $job_id 2>&1)
 
   # ユーザー名を抽出
   user=$(echo "$job_info" | grep "Job Queued at request of" | awk '{print $12}' | awk -F "@" '{print $1}')
   user=${user:-"Unknown"}  # ユーザー名が空の場合は "Unknown" とする
 
   # ノード数を抽出
-  node_count=$(echo "$job_info" | grep "exec_vnode" | grep -o "+(" | wc -l)
-  node_count=${node_count:-0}  # デフォルト値を0とする
+  nodes=$(echo "$job_info" | grep "exec_vnode" | grep -oP 'ip-\w+:\w+' | cut -d: -f 1)
+  # ユニークなノードをカウント
+  unique_nodes=$(echo "$nodes" | sort -u | wc -l)
+  # ユニークなノード数を表示
+  #echo "Unique node count: $unique_nodes"
 
   # 実行時間を抽出
   walltime=$(echo "$job_info" | grep "resources_used.walltime" | awk '{print $10}' | awk -F "=" '{print $2}')
 
   # 実行時間を時間に変換（空白チェックを追加）
-  if [[ -n "$walltime" && "$node_count" -ne 0 ]]; then
+  if [[ -n "$walltime" && "$unique_nodes" -ne 0 ]]; then
     hours=$(echo $walltime | awk -F ":" '{print $1 + $2 / 60 + $3 / 3600}')
     # コスト計算前にデバッグ情報を表示
-    echo "Calculating cost for $user: Hours = $hours, Nodes = $node_count"
+    echo "Calculating cost for $user: Hours = $hours, Nodes = $unique_nodes"
     # コストを計算（0時間でもエラーが出ないように修正）
-    cost=$(echo "$hours * $node_count * $COST_PER_NODE_HOUR" | bc -l)
+    cost=$(echo "$hours * $unique_nodes * $COST_PER_NODE_HOUR" | bc -l)
     user_costs["$user"]=$(echo "${user_costs[$user]:-0} + $cost" | bc -l)
   else
     cost="N/A"
