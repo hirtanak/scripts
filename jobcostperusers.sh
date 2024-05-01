@@ -52,7 +52,7 @@ do
   fi
 
   # 結果をファイルに書き込む
-  echo "$user,$job_id,$node_count,$walltime,$cost" >> $output_file
+  echo "$user,$job_id,$unique_nodes,$walltime,$cost" >> $output_file
 done
 
 # 各ユーザの総コストを表示
