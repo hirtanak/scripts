@@ -13,6 +13,9 @@ echo "User,JobID,NodeCount,Walltime,Cost" > $output_file
 start_job_id=0
 end_job_id=30
 
+# 過去何日間のログを収集
+DAY=30
+
 # ユーザごとの総コストを保存する連想配列
 declare -A user_costs
 
@@ -20,7 +23,7 @@ declare -A user_costs
 for (( job_id=$start_job_id; job_id<=$end_job_id; job_id++ ))
 do
   # tracejobの出力から必要な情報を抽出
-  job_info=$(tracejob $job_id 2>&1)
+  job_info=$(tracejob -n ${DAY} $job_id 2>&1)
 
   # ユーザー名を抽出
   user=$(echo "$job_info" | grep "Job Queued at request of" | awk '{print $12}' | awk -F "@" '{print $1}')
